@@ -355,7 +355,7 @@ OUTPUT FORMAT (JSON ONLY)
                     "temperature": 0.2,
                     "max_tokens": 800
                 },
-                timeout=120
+                timeout=180
             )
             
             print(f"[Brain] Status: {response.status_code}")
