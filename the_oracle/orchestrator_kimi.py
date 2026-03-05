@@ -132,7 +132,9 @@ class OracleOrchestratorKimi:
             
             # Save decision
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            with open(f"the_oracle/output/llm_decision_kimi_{timestamp}.json", 'w') as f:
+            output_dir = os.path.join(ORACLE_DIR, 'output')
+            os.makedirs(output_dir, exist_ok=True)
+            with open(os.path.join(output_dir, f"llm_decision_kimi_{timestamp}.json"), 'w') as f:
                 json.dump(decision, f, indent=2)
             
             print("\n" + "="*70)

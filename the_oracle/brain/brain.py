@@ -64,6 +64,105 @@ class OracleBrainLLM:
         except:
             return []
     
+    def read_signal_buffer(self, symbol: str, minutes: int = 30) -> List[Dict]:
+        """Read signal timeline from buffer"""
+        try:
+            buffer_file = "the_oracle/output/technical_buffer.jsonl"
+            if not os.path.exists(buffer_file):
+                return []
+            
+            cutoff = datetime.now().timestamp() - (minutes * 60)
+            readings = []
+            
+            with open(buffer_file, 'r') as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line.strip())
+                        if entry.get('symbol') == symbol:
+                            ts = datetime.fromisoformat(entry['timestamp']).timestamp()
+                            if ts >= cutoff:
+                                readings.append(entry)
+                    except:
+                        continue
+            
+            return readings
+        except:
+            return []
+    
+    def analyze_trend(self, readings: List[Dict]) -> Dict:
+        """Analyze trend from buffer readings"""
+        if len(readings) < 2:
+            return {"direction": "stable", "change": 0, "pattern": "insufficient_data"}
+        
+        # Sort by time
+        readings_sorted = sorted(readings, key=lambda x: x.get('timestamp', ''))
+        
+        # Get first and last confidence
+        first_conf = readings_sorted[0].get('confidence', 0)
+        last_conf = readings_sorted[-1].get('confidence', 0)
+        change = last_conf - first_conf
+        
+        # Determine trend
+        if change > 10:
+            trend_dir = "increasing"
+        elif change < -10:
+            trend_dir = "decreasing"
+        else:
+            trend_dir = "stable"
+        
+        # Detect pattern
+        confidences = [r.get('confidence', 0) for r in readings_sorted]
+        if len(confidences) >= 3:
+            if all(confidences[i] <= confidences[i+1] for i in range(len(confidences)-1)):
+                pattern = "strong_acceleration"
+            elif all(confidences[i] >= confidences[i+1] for i in range(len(confidences)-1)):
+                pattern = "deceleration"
+            elif confidences[-1] == max(confidences):
+                pattern = "peak"
+            elif confidences[-1] == min(confidences):
+                pattern = "bottom"
+            else:
+                pattern = "oscillating"
+        else:
+            pattern = "building"
+        
+        return {
+            "direction": trend_dir,
+            "change": change,
+            "pattern": pattern,
+            "readings_count": len(readings),
+            "time_span_minutes": len(readings) * 2  # Approximate
+        }
+    
+    def build_timeline_summary(self, symbol: str) -> str:
+        """Build timeline summary for a symbol"""
+        readings = self.read_signal_buffer(symbol, 30)
+        
+        if not readings:
+            return f"{symbol}: No recent data"
+        
+        # Get current data
+        current = readings[-1]
+        trend = self.analyze_trend(readings)
+        
+        # Build timeline string
+        if len(readings) >= 3:
+            # Show evolution
+            points = []
+            for i, r in enumerate(readings[-5:]):  # Last 5 points
+                time_str = r['timestamp'][11:16]  # HH:MM
+                points.append(f"{time_str}:{r['confidence']}%")
+            
+            timeline = " → ".join(points)
+            
+            summary = f"""{symbol}: {current['direction']} {current['confidence']}% ({current['trend_strength']})
+  Timeline: {timeline}
+  Pattern: {trend['pattern']} | Change: {trend['change']:+.0f}% | Trend: {trend['direction']}"""
+        else:
+            summary = f"{symbol}: {current['direction']} {current['confidence']}% ({current['trend_strength']}) - Building data"
+        
+        return summary
+    
     def get_daily_stats(self) -> Dict:
         """Get today's trading stats"""
         try:
@@ -91,32 +190,72 @@ class OracleBrainLLM:
             return {'daily_pnl': 0, 'trades_today': 0}
     
     def build_prompt(self, signals: Dict, account_balance: float, history: List[Dict], daily_stats: Dict) -> str:
-        """Build prompt for LLM - FRESH START MODE"""
+        """Build enriched prompt with timeline data"""
         
-        # FRESH START: Ignore history for win rate, use balance as starting point
-        prompt = f"""You are THE ORACLE - expert forex trader. TODAY IS FRESH START.
+        # Build timeline summaries for each symbol
+        symbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD']
+        timeline_sections = []
+        
+        for symbol in symbols:
+            timeline_sections.append(self.build_timeline_summary(symbol))
+        
+        # Find best momentum opportunity
+        best_momentum = None
+        best_score = 0
+        for symbol in symbols:
+            readings = self.read_signal_buffer(symbol, 30)
+            if readings:
+                trend = self.analyze_trend(readings)
+                current_conf = readings[-1].get('confidence', 0)
+                # Score = current confidence + momentum bonus
+                score = current_conf + (trend['change'] if trend['change'] > 0 else 0)
+                if score > best_score:
+                    best_score = score
+                    best_momentum = {
+                        'symbol': symbol,
+                        'confidence': current_conf,
+                        'trend': trend
+                    }
+        
+        momentum_hint = ""
+        if best_momentum and best_momentum['trend']['change'] > 10:
+            momentum_hint = f"\n🔥 STRONG MOMENTUM: {best_momentum['symbol']} gaining +{best_momentum['trend']['change']:.0f}% confidence"
+        
+        prompt = f"""You are THE ORACLE - expert forex trader analyzing MOMENTUM & TRENDS.
 
 Starting Balance: ${account_balance:.2f}
-Session: NEW (fresh start - ignore previous trades)
+Session: NEW (fresh start - real-time data every 2 minutes)
 
-## MARKET SIGNALS
+## SIGNAL TIMELINES (Last 30 minutes, 2-min intervals)
+{momentum_hint}
+
 """
-        for symbol, data in signals.get('technical', {}).items():
-            prompt += f"{symbol}: {data.get('direction')} {data.get('confidence')}%\n"
+        # Add timeline for each symbol
+        for section in timeline_sections:
+            prompt += section + "\n\n"
         
-        prompt += f"""
-USD: {signals.get('sentiment', {}).get('usd_strength', 50)}/100 | Risk: {signals.get('sentiment', {}).get('risk_tone', 'MIXED')}
+        prompt += f"""## MARKET CONTEXT
+USD Strength: {signals.get('sentiment', {}).get('usd_strength', 50)}/100
+Risk Tone: {signals.get('sentiment', {}).get('risk_tone', 'MIXED')}
 News Events: {signals.get('news', {}).get('high_impact_events', 0)}
 
-## DECISION - FRESH START MODE
-- Balance ${account_balance:.2f} is your starting capital
-- Trade ONLY with confidence > 75%
-- Max lot size: 0.5
-- NO daily loss limit for this session
-- Pick best opportunity from signals
+## ANALYSIS GUIDE - READ THE TRENDS
+Look for:
+1. "acceleration" = momentum building (enter early)
+2. "peak" = top of move (wait or reduce size)
+3. "strong_acceleration" = high conviction signal
+4. "stable" + high confidence = good continuation
+5. "deceleration" = momentum fading (avoid)
 
-RESPOND WITH JSON ONLY:
-{{"decision": "TRADE" or "NO_TRADE", "symbol": "SYMBOL" or null, "direction": "BUY" or "SELL" or null, "lot_size": 0.1-0.5, "confidence": 0-100, "reasoning": "explanation"}}"""
+## DECISION RULES
+- Balance ${account_balance:.2f} is starting capital
+- Trade ONLY with current confidence > 75%
+- Max lot: 0.5, prefer 0.2-0.3 for uncertain setups
+- Pick symbol with best momentum + trend alignment
+- If multiple strong signals, pick highest confidence
+
+JSON ONLY:
+{{"decision": "TRADE" or "NO_TRADE", "symbol": "SYMBOL", "direction": "BUY" or "SELL", "lot_size": 0.1-0.5, "confidence": 0-100, "reasoning": "trend analysis here"}}"""
         
         return prompt
     
