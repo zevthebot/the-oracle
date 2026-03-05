@@ -208,10 +208,10 @@ class OracleBrainLLM:
         # Build open positions section
         positions_section = ""
         if open_trades:
-            positions_section = "\n📊 OPEN POSITIONS:\n"
+            positions_section = "\n[OPEN POSITIONS]\n"
             total_volume = 0
             for trade in open_trades:
-                positions_section += f"  • {trade['symbol']} {trade['type']} {trade['volume']} lots @ {trade['open_price']:.5f}\n"
+                positions_section += f"  - {trade['symbol']} {trade['type']} {trade['volume']} lots @ {trade['open_price']:.5f}\n"
                 positions_section += f"    Current: {trade['current_price']:.5f} | P&L: ${trade['profit']:.2f}\n"
                 total_volume += trade['volume']
             positions_section += f"  Total Volume: {total_volume:.2f} lots | Unrealized P&L: ${open_pnl:.2f}\n"
@@ -219,9 +219,9 @@ class OracleBrainLLM:
             # Check correlations
             symbols_open = [t['symbol'] for t in open_trades]
             if len(set(symbols_open)) == 1:
-                positions_section += f"  ⚠️  CONCENTRATION RISK: All trades on {symbols_open[0]}\n"
+                positions_section += f"  [WARNING] CONCENTRATION RISK: All trades on {symbols_open[0]}\n"
         else:
-            positions_section = "\n📊 OPEN POSITIONS: None (fresh start)\n"
+            positions_section = "\n[OPEN POSITIONS] None (fresh start)\n"
         
         # Build market analysis section
         symbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD']
@@ -253,7 +253,7 @@ class OracleBrainLLM:
         hot_opportunity = ""
         if best_setup and best_setup['trend']['change'] > 10:
             hot_opportunity = f"""
-🔥 HOT OPPORTUNITY:
+[HOT OPPORTUNITY]
 {best_setup['symbol']} showing STRONG MOMENTUM (+{best_setup['trend']['change']:.0f}% confidence gain)
 Pattern: {best_setup['trend']['pattern'].replace('_', ' ').upper()}
 """
@@ -263,39 +263,39 @@ Pattern: {best_setup['trend']['pattern'].replace('_', ' ').upper()}
 You have managed $100M+ portfolios with consistent profitability.
 You combine technical mastery with market intuition and iron discipline.
 
-═══════════════════════════════════════════════════════════════
-🏦 ACCOUNT STATUS
-═══════════════════════════════════════════════════════════════
+================================================================
+ACCOUNT STATUS
+================================================================
 Balance: ${balance:.2f}
 Equity: ${equity:.2f}
 Daily Drawdown: {daily_dd:.2f}% (MAX ALLOWED: 4.0%)
 {positions_section}
 
-═══════════════════════════════════════════════════════════════
-🎯 STRATEGIC OBJECTIVES
-═══════════════════════════════════════════════════════════════
+================================================================
+STRATEGIC OBJECTIVES
+================================================================
 PRIMARY GOAL: Achieve 10% profit = ${metrics['target_profit_formatted']}
 Target Timeline: 2-4 weeks (aggressive but controlled)
 Daily Profit Target: ${metrics['daily_profit_target']:.2f}
 Risk Per Trade: {metrics['risk_per_trade_pct']:.1f}%
 
-═══════════════════════════════════════════════════════════════
-📈 MARKET INTELLIGENCE (Multi-Timeframe Analysis)
-═══════════════════════════════════════════════════════════════
+================================================================
+MARKET INTELLIGENCE (Multi-Timeframe Analysis)
+================================================================
 {market_analysis}
 
 {hot_opportunity}
 
-═══════════════════════════════════════════════════════════════
-🌍 MACRO CONTEXT
-═══════════════════════════════════════════════════════════════
+================================================================
+MACRO CONTEXT
+================================================================
 USD Strength: {signals.get('sentiment', {}).get('usd_strength', 50)}/100
 Risk Tone: {signals.get('sentiment', {}).get('risk_tone', 'MIXED')}
 High Impact Events: {signals.get('news', {}).get('high_impact_events', 0)}
 
-═══════════════════════════════════════════════════════════════
-🧠 TRADING PRINCIPLES (NEVER VIOLATE)
-═══════════════════════════════════════════════════════════════
+================================================================
+TRADING PRINCIPLES (NEVER VIOLATE)
+================================================================
 1. CAPITAL PROTECTION > Profit (Max 4% daily drawdown hard limit)
 2. QUALITY > Quantity (Only A+ setups, 75+ score minimum)
 3. MOMENTUM > Prediction (Follow the trend, don't fight it)
@@ -303,32 +303,32 @@ High Impact Events: {signals.get('news', {}).get('high_impact_events', 0)}
 5. DISCIPLINE > Emotion (Stick to rules, exit when wrong)
 
 SETUP SCORING:
-• Multi-timeframe confluence: +30 points
-• Accelerating momentum: +25 points
-• USD/Risk alignment: +20 points
-• No opposing positions: +15 points
-• Good timing (avoid news/weekend): +10 points
+- Multi-timeframe confluence: +30 points
+- Accelerating momentum: +25 points
+- USD/Risk alignment: +20 points
+- No opposing positions: +15 points
+- Good timing (avoid news/weekend): +10 points
 
-═══════════════════════════════════════════════════════════════
-⚡ DECISION FRAMEWORK
-═══════════════════════════════════════════════════════════════
-IF Trade Score ≥ 75:
-  → direction: "BUY" or "SELL"
-  → lot_size: 0.1-0.5 (based on conviction: 75-85=0.2, 85-95=0.3, 95+=0.5)
-  → confidence: score (75-100)
-  → reasoning: Explain the setup, momentum, and risk management
+================================================================
+DECISION FRAMEWORK
+================================================================
+IF Trade Score >= 75:
+  - direction: "BUY" or "SELL"
+  - lot_size: 0.1-0.5 (based on conviction: 75-85=0.2, 85-95=0.3, 95+=0.5)
+  - confidence: score (75-100)
+  - reasoning: Explain the setup, momentum, and risk management
 
-IF Trade Score < 75 OR Daily DD ≥ 4%:
-  → decision: "NO_TRADE"
-  → reasoning: Explain what you're waiting for
+IF Trade Score < 75 OR Daily DD >= 4%:
+  - decision: "NO_TRADE"
+  - reasoning: Explain what you're waiting for
 
 IF Positions Already Open:
-  → Evaluate if adding improves or hurts portfolio
-  → Consider taking profits on existing before opening new
+  - Evaluate if adding improves or hurts portfolio
+  - Consider taking profits on existing before opening new
 
-═══════════════════════════════════════════════════════════════
-📊 OUTPUT FORMAT (JSON ONLY)
-═══════════════════════════════════════════════════════════════
+================================================================
+OUTPUT FORMAT (JSON ONLY)
+================================================================
 {{"decision": "TRADE" or "NO_TRADE", "symbol": "XXXYYY" or null, "direction": "BUY" or "SELL" or null, "lot_size": 0.1-0.5, "confidence": 75-100, "reasoning": "Detailed explanation with technical justification"}}"""
         
         return prompt
