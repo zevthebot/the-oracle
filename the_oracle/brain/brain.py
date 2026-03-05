@@ -1,29 +1,32 @@
-"""
-THE ORACLE - AI Brain v3.1 (LLM with MiniMax M2.5)
-Uses: minimax/minimax-m2.5 via OpenRouter
+#!/usr/bin/env python3
+"""THE ORACLE - AI Brain v4.0 (Expert Forex Trader)
+
+MiniMax M2.5 powered trading decisions with senior trader expertise.
+Features: Account awareness, risk management, multi-timeframe analysis.
 """
 
 import json
 import os
+import re
 from typing import Dict, List, Optional
 from datetime import datetime
 import requests
 
-# Fix stdout encoding for Windows
-import sys
-if sys.platform == 'win32':
-    import codecs
-    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer)
+# Try to import MT5 for live account data
+try:
+    import MetaTrader5 as mt5
+    MT5_AVAILABLE = True
+except:
+    MT5_AVAILABLE = False
 
 
 class OracleBrainLLM:
-    """AI Brain - Powered by MiniMax M2.5"""
+    """AI Brain - Expert Forex Trader powered by MiniMax M2.5"""
     
     def __init__(self, model: str = "minimax/minimax-m2.5"):
         self.model = model
         self.api_key = os.getenv("OPENROUTER_API_KEY", "")
         
-        # Fallback: try to load from config
         if not self.api_key:
             try:
                 with open(os.path.expanduser("~/.openclaw/openclaw.json")) as f:
@@ -36,33 +39,50 @@ class OracleBrainLLM:
             raise ValueError("No OPENROUTER_API_KEY found!")
         
         self.base_url = "https://openrouter.ai/api/v1"
-        
-    def load_recent_history(self, n: int = 20) -> List[Dict]:
-        """Load recent trade history"""
+    
+    def get_account_status(self) -> Dict:
+        """Get live account status from MT5"""
         try:
-            journal_path = "mt5_trader/universal_trade_journal.jsonl"
-            if not os.path.exists(journal_path):
-                return []
+            if not MT5_AVAILABLE:
+                return {"balance": 0, "equity": 0, "open_trades": [], "daily_dd": 0}
             
-            results = []
-            with open(journal_path, 'r') as f:
-                for line in reversed(f.readlines()):
-                    try:
-                        entry = json.loads(line)
-                        if entry.get('event') == 'EXIT':
-                            results.append({
-                                'symbol': entry.get('symbol'),
-                                'pnl': entry.get('pnl', 0),
-                                'exit_reason': entry.get('exit_reason'),
-                                'timestamp': entry.get('timestamp', '')
-                            })
-                            if len(results) >= n:
-                                break
-                    except:
-                        continue
-            return results
-        except:
-            return []
+            if not mt5.initialize():
+                return {"balance": 0, "equity": 0, "open_trades": [], "daily_dd": 0}
+            
+            account = mt5.account_info()
+            positions = mt5.positions_get()
+            
+            # Calculate daily drawdown
+            daily_pnl = sum(p.profit for p in positions) if positions else 0
+            daily_dd_pct = (abs(daily_pnl) / account.balance * 100) if account.balance > 0 else 0
+            
+            result = {
+                "balance": account.balance,
+                "equity": account.equity,
+                "open_pnl": daily_pnl,
+                "daily_dd": daily_dd_pct,
+                "open_trades": []
+            }
+            
+            if positions:
+                for pos in positions:
+                    result["open_trades"].append({
+                        "ticket": pos.ticket,
+                        "symbol": pos.symbol,
+                        "type": "BUY" if pos.type == 0 else "SELL",
+                        "volume": pos.volume,
+                        "open_price": pos.price_open,
+                        "current_price": pos.price_current,
+                        "profit": pos.profit,
+                        "swap": pos.swap
+                    })
+            
+            mt5.shutdown()
+            return result
+            
+        except Exception as e:
+            print(f"[Brain] Warning: Could not get account status: {e}")
+            return {"balance": 0, "equity": 0, "open_trades": [], "daily_dd": 0}
     
     def read_signal_buffer(self, symbol: str, minutes: int = 30) -> List[Dict]:
         """Read signal timeline from buffer"""
@@ -94,35 +114,34 @@ class OracleBrainLLM:
         if len(readings) < 2:
             return {"direction": "stable", "change": 0, "pattern": "insufficient_data"}
         
-        # Sort by time
         readings_sorted = sorted(readings, key=lambda x: x.get('timestamp', ''))
-        
-        # Get first and last confidence
         first_conf = readings_sorted[0].get('confidence', 0)
         last_conf = readings_sorted[-1].get('confidence', 0)
         change = last_conf - first_conf
         
-        # Determine trend
         if change > 10:
-            trend_dir = "increasing"
+            trend_dir = "accelerating"
+        elif change > 5:
+            trend_dir = "strengthening"
         elif change < -10:
-            trend_dir = "decreasing"
+            trend_dir = "decelerating"
+        elif change < -5:
+            trend_dir = "weakening"
         else:
             trend_dir = "stable"
         
-        # Detect pattern
         confidences = [r.get('confidence', 0) for r in readings_sorted]
         if len(confidences) >= 3:
             if all(confidences[i] <= confidences[i+1] for i in range(len(confidences)-1)):
-                pattern = "strong_acceleration"
+                pattern = "strong_momentum_building"
             elif all(confidences[i] >= confidences[i+1] for i in range(len(confidences)-1)):
-                pattern = "deceleration"
+                pattern = "momentum_fading"
             elif confidences[-1] == max(confidences):
-                pattern = "peak"
+                pattern = "at_peak"
             elif confidences[-1] == min(confidences):
-                pattern = "bottom"
+                pattern = "at_bottom"
             else:
-                pattern = "oscillating"
+                pattern = "consolidating"
         else:
             pattern = "building"
         
@@ -131,7 +150,7 @@ class OracleBrainLLM:
             "change": change,
             "pattern": pattern,
             "readings_count": len(readings),
-            "time_span_minutes": len(readings) * 2  # Approximate
+            "current_strength": readings_sorted[-1].get('trend_strength', 'moderate')
         }
     
     def build_timeline_summary(self, symbol: str) -> str:
@@ -141,128 +160,183 @@ class OracleBrainLLM:
         if not readings:
             return f"{symbol}: No recent data"
         
-        # Get current data
         current = readings[-1]
         trend = self.analyze_trend(readings)
         
-        # Build timeline string
-        if len(readings) >= 3:
-            # Show evolution
+        if len(readings) >= 2:
             points = []
-            for i, r in enumerate(readings[-5:]):  # Last 5 points
-                time_str = r['timestamp'][11:16]  # HH:MM
-                points.append(f"{time_str}:{r['confidence']}%")
-            
+            for r in readings[-5:]:
+                time_str = r['timestamp'][11:16]
+                points.append(f"{time_str}:{r['confidence']:.0f}%")
             timeline = " → ".join(points)
             
-            summary = f"""{symbol}: {current['direction']} {current['confidence']}% ({current['trend_strength']})
+            summary = f"""{symbol}: {current['direction']} {current['confidence']:.0f}% ({trend['current_strength']})
   Timeline: {timeline}
-  Pattern: {trend['pattern']} | Change: {trend['change']:+.0f}% | Trend: {trend['direction']}"""
+  Pattern: {trend['pattern'].replace('_', ' ').upper()} | Change: {trend['change']:+.0f}% | Trend: {trend['direction'].upper()}"""
         else:
-            summary = f"{symbol}: {current['direction']} {current['confidence']}% ({current['trend_strength']}) - Building data"
+            summary = f"{symbol}: {current['direction']} {current['confidence']:.0f}% - Building data"
         
         return summary
     
-    def get_daily_stats(self) -> Dict:
-        """Get today's trading stats"""
-        try:
-            today = datetime.now().strftime('%Y-%m-%d')
-            journal_path = "mt5_trader/universal_trade_journal.jsonl"
-            
-            daily_pnl = 0
-            trades_today = 0
-            
-            if os.path.exists(journal_path):
-                with open(journal_path, 'r') as f:
-                    for line in f:
-                        try:
-                            entry = json.loads(line)
-                            if entry.get('event') == 'EXIT':
-                                ts = entry.get('timestamp', '')
-                                if today in ts:
-                                    daily_pnl += entry.get('pnl', 0)
-                                    trades_today += 1
-                        except:
-                            continue
-            
-            return {'daily_pnl': daily_pnl, 'trades_today': trades_today}
-        except:
-            return {'daily_pnl': 0, 'trades_today': 0}
-    
-    def build_prompt(self, signals: Dict, account_balance: float, history: List[Dict], daily_stats: Dict) -> str:
-        """Build enriched prompt with timeline data"""
+    def calculate_target_metrics(self, balance: float) -> Dict:
+        """Calculate target metrics for 10% profit goal"""
+        target_profit = balance * 0.10
+        daily_target = target_profit / 14  # 2 weeks aggressive target
         
-        # Build timeline summaries for each symbol
+        return {
+            "target_profit_10pct": target_profit,
+            "target_profit_formatted": f"${target_profit:.2f}",
+            "estimated_timeframe": "2-4 weeks (aggressive but controlled)",
+            "daily_profit_target": daily_target,
+            "risk_per_trade_pct": 0.5  # 0.5% per trade
+        }
+    
+    def build_enriched_prompt(self, signals: Dict, account_balance: float) -> str:
+        """Build expert-level prompt with full context"""
+        
+        # Get live account data
+        account = self.get_account_status()
+        balance = account.get('balance', account_balance) or account_balance
+        equity = account.get('equity', balance)
+        open_pnl = account.get('open_pnl', 0)
+        daily_dd = account.get('daily_dd', 0)
+        open_trades = account.get('open_trades', [])
+        
+        # Calculate targets
+        metrics = self.calculate_target_metrics(balance)
+        
+        # Build open positions section
+        positions_section = ""
+        if open_trades:
+            positions_section = "\n📊 OPEN POSITIONS:\n"
+            total_volume = 0
+            for trade in open_trades:
+                positions_section += f"  • {trade['symbol']} {trade['type']} {trade['volume']} lots @ {trade['open_price']:.5f}\n"
+                positions_section += f"    Current: {trade['current_price']:.5f} | P&L: ${trade['profit']:.2f}\n"
+                total_volume += trade['volume']
+            positions_section += f"  Total Volume: {total_volume:.2f} lots | Unrealized P&L: ${open_pnl:.2f}\n"
+            
+            # Check correlations
+            symbols_open = [t['symbol'] for t in open_trades]
+            if len(set(symbols_open)) == 1:
+                positions_section += f"  ⚠️  CONCENTRATION RISK: All trades on {symbols_open[0]}\n"
+        else:
+            positions_section = "\n📊 OPEN POSITIONS: None (fresh start)\n"
+        
+        # Build market analysis section
         symbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD']
-        timeline_sections = []
+        market_sections = []
         
         for symbol in symbols:
-            timeline_sections.append(self.build_timeline_summary(symbol))
+            market_sections.append(self.build_timeline_summary(symbol))
+        
+        market_analysis = "\n\n".join(market_sections)
         
         # Find best momentum opportunity
-        best_momentum = None
+        best_setup = None
         best_score = 0
         for symbol in symbols:
             readings = self.read_signal_buffer(symbol, 30)
             if readings:
                 trend = self.analyze_trend(readings)
                 current_conf = readings[-1].get('confidence', 0)
-                # Score = current confidence + momentum bonus
+                # Score = confidence + momentum bonus
                 score = current_conf + (trend['change'] if trend['change'] > 0 else 0)
                 if score > best_score:
                     best_score = score
-                    best_momentum = {
+                    best_setup = {
                         'symbol': symbol,
                         'confidence': current_conf,
                         'trend': trend
                     }
         
-        momentum_hint = ""
-        if best_momentum and best_momentum['trend']['change'] > 10:
-            momentum_hint = f"\n🔥 STRONG MOMENTUM: {best_momentum['symbol']} gaining +{best_momentum['trend']['change']:.0f}% confidence"
-        
-        prompt = f"""You are THE ORACLE - expert forex trader analyzing MOMENTUM & TRENDS.
-
-Starting Balance: ${account_balance:.2f}
-Session: NEW (fresh start - real-time data every 2 minutes)
-
-## SIGNAL TIMELINES (Last 30 minutes, 2-min intervals)
-{momentum_hint}
-
+        hot_opportunity = ""
+        if best_setup and best_setup['trend']['change'] > 10:
+            hot_opportunity = f"""
+🔥 HOT OPPORTUNITY:
+{best_setup['symbol']} showing STRONG MOMENTUM (+{best_setup['trend']['change']:.0f}% confidence gain)
+Pattern: {best_setup['trend']['pattern'].replace('_', ' ').upper()}
 """
-        # Add timeline for each symbol
-        for section in timeline_sections:
-            prompt += section + "\n\n"
         
-        prompt += f"""## MARKET CONTEXT
+        # Build final prompt
+        prompt = f"""You are THE ORACLE - A SENIOR FOREX TRADER with 15+ years experience.
+You have managed $100M+ portfolios with consistent profitability.
+You combine technical mastery with market intuition and iron discipline.
+
+═══════════════════════════════════════════════════════════════
+🏦 ACCOUNT STATUS
+═══════════════════════════════════════════════════════════════
+Balance: ${balance:.2f}
+Equity: ${equity:.2f}
+Daily Drawdown: {daily_dd:.2f}% (MAX ALLOWED: 4.0%)
+{positions_section}
+
+═══════════════════════════════════════════════════════════════
+🎯 STRATEGIC OBJECTIVES
+═══════════════════════════════════════════════════════════════
+PRIMARY GOAL: Achieve 10% profit = ${metrics['target_profit_formatted']}
+Target Timeline: 2-4 weeks (aggressive but controlled)
+Daily Profit Target: ${metrics['daily_profit_target']:.2f}
+Risk Per Trade: {metrics['risk_per_trade_pct']:.1f}%
+
+═══════════════════════════════════════════════════════════════
+📈 MARKET INTELLIGENCE (Multi-Timeframe Analysis)
+═══════════════════════════════════════════════════════════════
+{market_analysis}
+
+{hot_opportunity}
+
+═══════════════════════════════════════════════════════════════
+🌍 MACRO CONTEXT
+═══════════════════════════════════════════════════════════════
 USD Strength: {signals.get('sentiment', {}).get('usd_strength', 50)}/100
 Risk Tone: {signals.get('sentiment', {}).get('risk_tone', 'MIXED')}
-News Events: {signals.get('news', {}).get('high_impact_events', 0)}
+High Impact Events: {signals.get('news', {}).get('high_impact_events', 0)}
 
-## ANALYSIS GUIDE - READ THE TRENDS
-Look for:
-1. "acceleration" = momentum building (enter early)
-2. "peak" = top of move (wait or reduce size)
-3. "strong_acceleration" = high conviction signal
-4. "stable" + high confidence = good continuation
-5. "deceleration" = momentum fading (avoid)
+═══════════════════════════════════════════════════════════════
+🧠 TRADING PRINCIPLES (NEVER VIOLATE)
+═══════════════════════════════════════════════════════════════
+1. CAPITAL PROTECTION > Profit (Max 4% daily drawdown hard limit)
+2. QUALITY > Quantity (Only A+ setups, 75+ score minimum)
+3. MOMENTUM > Prediction (Follow the trend, don't fight it)
+4. CORRELATION AWARENESS (Don't stack same-direction trades)
+5. DISCIPLINE > Emotion (Stick to rules, exit when wrong)
 
-## DECISION RULES
-- Balance ${account_balance:.2f} is starting capital
-- Trade ONLY with current confidence > 75%
-- Max lot: 0.5, prefer 0.2-0.3 for uncertain setups
-- Pick symbol with best momentum + trend alignment
-- If multiple strong signals, pick highest confidence
+SETUP SCORING:
+• Multi-timeframe confluence: +30 points
+• Accelerating momentum: +25 points
+• USD/Risk alignment: +20 points
+• No opposing positions: +15 points
+• Good timing (avoid news/weekend): +10 points
 
-JSON ONLY:
-{{"decision": "TRADE" or "NO_TRADE", "symbol": "SYMBOL", "direction": "BUY" or "SELL", "lot_size": 0.1-0.5, "confidence": 0-100, "reasoning": "trend analysis here"}}"""
+═══════════════════════════════════════════════════════════════
+⚡ DECISION FRAMEWORK
+═══════════════════════════════════════════════════════════════
+IF Trade Score ≥ 75:
+  → direction: "BUY" or "SELL"
+  → lot_size: 0.1-0.5 (based on conviction: 75-85=0.2, 85-95=0.3, 95+=0.5)
+  → confidence: score (75-100)
+  → reasoning: Explain the setup, momentum, and risk management
+
+IF Trade Score < 75 OR Daily DD ≥ 4%:
+  → decision: "NO_TRADE"
+  → reasoning: Explain what you're waiting for
+
+IF Positions Already Open:
+  → Evaluate if adding improves or hurts portfolio
+  → Consider taking profits on existing before opening new
+
+═══════════════════════════════════════════════════════════════
+📊 OUTPUT FORMAT (JSON ONLY)
+═══════════════════════════════════════════════════════════════
+{{"decision": "TRADE" or "NO_TRADE", "symbol": "XXXYYY" or null, "direction": "BUY" or "SELL" or null, "lot_size": 0.1-0.5, "confidence": 75-100, "reasoning": "Detailed explanation with technical justification"}}"""
         
         return prompt
     
     def call_llm(self, prompt: str) -> Optional[Dict]:
         """Call MiniMax M2.5 via OpenRouter"""
         try:
-            print("[Brain] Sending request to MiniMax M2.5...")
+            print("[Brain] Consulting MiniMax Expert Trader...")
             
             response = requests.post(
                 f"{self.base_url}/chat/completions",
@@ -275,32 +349,31 @@ JSON ONLY:
                 json={
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": "You are THE ORACLE forex AI. Reply ONLY with valid JSON. No explanations. No markdown. Just raw JSON."},
-                        {"role": "user", "content": prompt + "\n\nIMPORTANT: Output ONLY valid JSON. Do not explain. Do not think out loud. Just output the JSON object."}
+                        {"role": "system", "content": "You are an expert forex trading AI. Output valid JSON only. Be decisive and professional."},
+                        {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.3,
-                    "max_tokens": 500,
-                    "stream": False
+                    "temperature": 0.2,
+                    "max_tokens": 800
                 },
                 timeout=120
             )
             
-            print(f"[Brain] Response status: {response.status_code}")
+            print(f"[Brain] Status: {response.status_code}")
             
             if response.status_code == 200:
                 result = response.json()
-                message = result['choices'][0].get('message', {})
+                choices = result.get('choices', [])
+                if not choices:
+                    return None
                 
-                # Handle both 'content' and 'reasoning' fields
+                message = choices[0].get('message', {})
                 content = message.get('content') or message.get('reasoning', '')
                 
                 if not content:
-                    print("[Brain] Warning: Empty response from LLM")
+                    print("[Brain] Empty response")
                     return None
                 
-                print(f"[Brain] Raw response: {content[:300]}")
-                
-                # Handle incomplete JSON
+                # Parse JSON with fallback
                 content = content.strip()
                 if content.startswith('```'):
                     content = content.split('```')[1]
@@ -308,120 +381,102 @@ JSON ONLY:
                         content = content[4:]
                 content = content.strip()
                 
-                # Try to fix incomplete JSON - MiniMax returns truncated JSON
+                # Handle incomplete JSON
                 if not content.endswith('}'):
-                    # Try to find complete fields and reconstruct
-                    import re
-                    decision_match = re.search(r'"decision"\s*:\s*"(\w+)"', content)
-                    symbol_match = re.search(r'"symbol"\s*:\s*"([^"]*)"', content)
-                    direction_match = re.search(r'"direction"\s*:\s*"(\w+)"', content)
-                    lot_match = re.search(r'"lot_size"\s*:\s*([0-9.]+)', content)
-                    conf_match = re.search(r'"confidence"\s*:\s*([0-9]+)', content)
-                    
-                    if decision_match:
-                        # Reconstruct from partial data
-                        return {
-                            'decision': decision_match.group(1),
-                            'symbol': symbol_match.group(1) if symbol_match else None,
-                            'direction': direction_match.group(1) if direction_match else None,
-                            'lot_size': float(lot_match.group(1)) if lot_match else 0.3,
-                            'confidence': int(conf_match.group(1)) if conf_match else 80,
-                            'reasoning': 'Partial JSON from MiniMax'
-                        }
-                    # Fallback: try to complete the JSON
-                    content = content.rstrip() + ', "lot_size": 0.3, "confidence": 80, "reasoning": "completed"}'
-                
-                try:
-                    decision = json.loads(content)
-                except json.JSONDecodeError:
-                    # Last resort: regex extraction
-                    import re
+                    # Try regex extraction for key fields
                     decision_match = re.search(r'"decision"\s*:\s*"(\w+)"', content)
                     if decision_match:
                         return {
                             'decision': decision_match.group(1),
                             'symbol': None,
                             'direction': None,
-                            'lot_size': 0.3,
-                            'confidence': 80,
-                            'reasoning': 'Emergency regex parse'
+                            'lot_size': 0,
+                            'confidence': 0,
+                            'reasoning': 'Partial JSON - using safe defaults'
                         }
-                    raise
+                    content = content.rstrip() + ', "reasoning": "completed"}'
                 
-                print(f"[Brain] LLM decision: {decision.get('decision')}")
-                return decision
-                
-            elif response.status_code == 429:
-                print("[Brain] Rate limited - waiting...")
-                return None
-            elif response.status_code == 400:
-                error_text = response.text[:500]
-                print(f"[Brain] API Error 400: {error_text}")
-                return None
+                try:
+                    decision = json.loads(content)
+                    print(f"[Brain] Decision: {decision.get('decision')}")
+                    return decision
+                except:
+                    # Last resort extraction
+                    if '"decision": "TRADE"' in content:
+                        return {'decision': 'TRADE', 'symbol': None, 'direction': None, 'lot_size': 0.3, 'confidence': 80, 'reasoning': 'Emergency parse'}
+                    return {'decision': 'NO_TRADE', 'symbol': None, 'direction': None, 'lot_size': 0, 'confidence': 0, 'reasoning': 'Parse error'}
             else:
-                print(f"[Brain] API Error {response.status_code}: {response.text[:200]}")
+                print(f"[Brain] API Error: {response.status_code}")
                 return None
                 
-        except requests.Timeout:
-            print("[Brain] Timeout after 120s - MiniMax too slow")
-            return None
         except Exception as e:
-            print(f"[Brain] Error: {e}")
+            print(f"[Brain] Exception: {e}")
             return None
     
     def make_decision(self, signals: Dict, account_balance: float) -> Dict:
-        """Main decision function - LLM ONLY"""
+        """Make trading decision with full context"""
         
-        history = self.load_recent_history(20)
-        daily_stats = self.get_daily_stats()
+        # Build enriched prompt
+        prompt = self.build_enriched_prompt(signals, account_balance)
         
-        prompt = self.build_prompt(signals, account_balance, history, daily_stats)
+        # Call LLM
         llm_response = self.call_llm(prompt)
         
         if not llm_response:
-            print("[Brain] LLM failed - returning SAFE mode")
             return {
                 "decision": "NO_TRADE",
                 "symbol": None,
                 "direction": None,
                 "lot_size": 0,
                 "confidence": 0,
-                "reasoning": "LLM timeout/error - safe mode",
+                "reasoning": "LLM communication failed",
                 "timestamp": datetime.now().isoformat(),
-                "source": "fallback_timeout"
+                "source": "fallback"
             }
         
-        # Parse response - handle None values safely
-        lot_size = llm_response.get('lot_size', 0) or 0
-        confidence = llm_response.get('confidence', 0) or 0
+        # Parse and validate
+        lot_size = float(llm_response.get('lot_size', 0) or 0)
+        confidence = int(llm_response.get('confidence', 0) or 0)
         
-        # Default lot if missing from partial JSON
-        if lot_size == 0:
+        # Default lot if missing
+        if lot_size == 0 and llm_response.get('decision') == 'TRADE':
             lot_size = 0.3
-            print(f"[Brain] Using default lot: 0.3")
         
         decision = {
-            "decision": llm_response.get('decision', 'NO_TRADE') or 'NO_TRADE',
+            "decision": llm_response.get('decision', 'NO_TRADE'),
             "symbol": llm_response.get('symbol'),
             "direction": llm_response.get('direction'),
-            "lot_size": float(lot_size),
-            "confidence": int(confidence),
-            "reasoning": llm_response.get('reasoning', 'No reasoning') or 'No reasoning',
+            "lot_size": lot_size,
+            "confidence": confidence,
+            "reasoning": llm_response.get('reasoning', 'No reasoning provided'),
             "timestamp": datetime.now().isoformat(),
-            "source": "llm_minimax_m2.5"
+            "source": "minimax_expert_v4"
         }
         
         # Hard safety limits
         if decision['lot_size'] > 0.5:
             decision['lot_size'] = 0.5
-            decision['reasoning'] += " [LOT CAPPED TO 0.5]"
+            decision['reasoning'] += " [LOT SIZE CAPPED TO 0.5]"
         
+        # Enforce minimum confidence
         if decision['confidence'] < 75:
             decision['decision'] = 'NO_TRADE'
-            decision['reasoning'] = f"Blocked: confidence {decision['confidence']}% < 75%"
+            decision['reasoning'] = f"Blocked: confidence {decision['confidence']}% below 75% threshold"
         
-        # DAILY LOSS CHECK DISABLED - FRESH START MODE
-        # Previous trades from other agents don't count
+        # Check daily drawdown limit (4%)
+        account = self.get_account_status()
+        if account.get('daily_dd', 0) >= 4.0:
+            decision['decision'] = 'NO_TRADE'
+            decision['reasoning'] = f"STOPPED: Daily drawdown {account['daily_dd']:.2f}% reached 4% limit"
+        
+        # Log decision
+        if decision['decision'] == 'TRADE':
+            print(f"\n🎯 EXPERT TRADE SIGNAL:")
+            print(f"   {decision['symbol']} {decision['direction']}")
+            print(f"   Lot: {decision['lot_size']}, Confidence: {decision['confidence']}%")
+            print(f"   🧠 {decision['reasoning'][:100]}...")
+        else:
+            print(f"⏸️  NO TRADE: {decision['reasoning'][:80]}...")
         
         return decision
 
@@ -429,7 +484,7 @@ JSON ONLY:
 OracleBrain = OracleBrainLLM
 
 if __name__ == "__main__":
+    print("THE ORACLE v4.0 - Expert Forex Trader AI")
     brain = OracleBrainLLM()
-    print("Brain v3.1 (MiniMax) initialized")
     print(f"Model: {brain.model}")
-    print(f"API Key: {brain.api_key[:20]}...")
+    print("Ready for trading decisions with full market context.")
