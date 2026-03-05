@@ -1,0 +1,337 @@
+"""
+THE ORACLE - AI Brain v2.0 (LLM-Powered)
+Uses Kimi K2.5 for intelligent trading decisions
+"""
+
+import json
+import os
+from typing import Dict, List, Optional
+from datetime import datetime
+import requests
+
+
+class OracleBrainLLM:
+    """
+    AI Brain powered by LLM (Kimi K2.5 via OpenRouter)
+    Makes intelligent trading decisions based on all agent signals
+    """
+    
+    def __init__(self, model: str = "openrouter/moonshotai/kimi-k2.5"):
+        self.model = model
+        self.api_key = os.getenv("OPENROUTER_API_KEY", "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")  # Using existing API key
+        self.decisions_file = "the_oracle/output/brain_decisions.json"
+        self.max_risk_per_trade = 2.0
+        self.max_daily_risk = 5.0
+        self.min_confidence = 75  # Raised from 60
+        
+    def load_recent_history(self, n: int = 20) -> List[Dict]:
+        """Load recent trade history for context"""
+        try:
+            journal_path = "mt5_trader/universal_trade_journal.jsonl"
+            if not os.path.exists(journal_path):
+                return []
+            
+            with open(journal_path, 'r') as f:
+                lines = f.readlines()
+                
+            # Get last n EXIT events
+            exits = []
+            for line in reversed(lines):
+                try:
+                    entry = json.loads(line)
+                    if entry.get('event') == 'EXIT':
+                        exits.append({
+                            'symbol': entry.get('symbol'),
+                            'pnl': entry.get('pnl', 0),
+                            'exit_reason': entry.get('exit_reason'),
+                            'duration_min': entry.get('duration_min', 0)
+                        })
+                        if len(exits) >= n:
+                            break
+                except:
+                    continue
+                    
+            return exits
+        except Exception as e:
+            print(f"[WARNING] Could not load history: {e}")
+            return []
+    
+    def get_daily_pnl(self) -> float:
+        """Calculate today's P&L"""
+        try:
+            today = datetime.now().strftime('%Y-%m-%d')
+            journal_path = "mt5_trader/universal_trade_journal.jsonl"
+            
+            if not os.path.exists(journal_path):
+                return 0
+                
+            daily_pnl = 0
+            with open(journal_path, 'r') as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                        if entry.get('event') == 'EXIT':
+                            ts = entry.get('timestamp', '')
+                            if today in ts:
+                                daily_pnl += entry.get('pnl', 0)
+                    except:
+                        continue
+                        
+            return daily_pnl
+        except:
+            return 0
+    
+    def build_prompt(self, signals: Dict, history: List[Dict], daily_pnl: float, account_balance: float) -> str:
+        """Build comprehensive prompt for LLM"""
+        
+        # Calculate win/loss stats from history
+        wins = [h for h in history if h['pnl'] > 0]
+        losses = [h for h in history if h['pnl'] <= 0]
+        recent_win_rate = len(wins) / len(history) * 100 if history else 50
+        
+        # Calculate remaining daily risk
+        daily_loss_percent = abs(min(0, daily_pnl)) / account_balance * 100
+        remaining_risk = self.max_daily_risk - daily_loss_percent
+        
+        prompt = f"""You are THE ORACLE - an expert trading AI managing a forex trading account.
+
+## ACCOUNT STATUS
+- Balance: ${account_balance:.2f}
+- Today's P&L: ${daily_pnl:.2f} ({daily_pnl/account_balance*100:.1f}%)
+- Daily Loss Limit: {self.max_daily_risk}% (Remaining: {remaining_risk:.1f}%)
+- Recent Win Rate (last {len(history)} trades): {recent_win_rate:.0f}%
+
+## RECENT TRADE HISTORY
+"""
+        
+        for i, h in enumerate(history[:10], 1):
+            status = "WIN" if h['pnl'] > 0 else "LOSS"
+            prompt += f"{i}. {h['symbol']} | {status} ${h['pnl']:.2f} | {h['exit_reason']}\n"
+        
+        prompt += f"""
+## CURRENT MARKET SIGNALS
+"""
+        
+        # Add technical signals
+        for symbol, data in signals.get('technical', {}).items():
+            prompt += f"""
+{symbol}:
+- Technical Trend: {data.get('trend', 'UNKNOWN')}
+- Confidence: {data.get('confidence', 0)}%
+- Direction: {data.get('direction', 'NEUTRAL')}
+- Confluences: {data.get('confluences', 0)}
+"""
+        
+        # Add sentiment
+        sentiment = signals.get('sentiment', {})
+        prompt += f"""
+## MARKET SENTIMENT
+- USD Strength: {sentiment.get('usd_strength', 50)}/100
+- Risk Tone: {sentiment.get('risk_tone', 'MIXED')}
+- News Bias: {signals.get('news', {}).get('news_bias', 'neutral')}
+- High Impact Events: {signals.get('news', {}).get('high_impact_events', 0)}
+
+## YOUR TASK
+Analyze all signals and decide:
+1. Should we trade now? (YES or NO)
+2. If YES: which symbol, direction, lot size?
+3. Strict risk management required:
+   - Max risk per trade: {self.max_risk_per_trade}% = ${account_balance * self.max_risk_per_trade / 100:.2f}
+   - Max lot size: 0.5 (conservative)
+   - Min quality threshold: 75%
+   - If 3+ recent losses: REDUCE SIZE or SKIP
+   - If daily loss > 3%: STOP TRADING
+
+## RESPONSE FORMAT (JSON only)
+{\\n  \"decision\": \"TRADE\" or \"NO_TRADE\",\\n  \"symbol\": \"EURUSD\",\\n  \"direction\": \"BUY\" or \"SELL\",\\n  \"lot_size\": 0.1-0.5,\\n  \"confidence\": 0-100,\\n  \"reasoning\": \"Clear explanation of why\"\\n}"""
+        
+        return prompt
+    
+    def call_llm(self, prompt: str) -> Optional[Dict]:
+        """Call OpenRouter API for Kimi K2.5"""
+        try:
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": "You are an expert forex trading AI. Respond ONLY with valid JSON."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.3,  # Lower = more consistent
+                    "max_tokens": 500
+                },
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result['choices'][0]['message']['content']
+                
+                # Try to parse JSON from response
+                try:
+                    # Clean up potential markdown
+                    content = content.replace('```json', '').replace('```', '').strip()
+                    return json.loads(content)
+                except json.JSONDecodeError:
+                    print(f"[ERROR] LLM returned invalid JSON: {content[:200]}")
+                    return None
+            else:
+                print(f"[ERROR] LLM API error: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            print(f"[ERROR] LLM call failed: {e}")
+            return None
+    
+    def make_decision(self, signals: Dict, account_balance: float = 10000) -> Dict:
+        """
+        Main decision function - uses LLM for intelligent analysis
+        """
+        # Load context
+        history = self.load_recent_history(20)
+        daily_pnl = self.get_daily_pnl()
+        
+        # Build prompt
+        prompt = self.build_prompt(signals, history, daily_pnl, account_balance)
+        
+        print("[BRAIN LLM] Calling Kimi K2.5 for decision...")
+        
+        # Get LLM decision
+        llm_response = self.call_llm(prompt)
+        
+        if not llm_response:
+            # Fallback to safe mode
+            print("[BRAIN LLM] LLM failed, using fallback NO_TRADE")
+            return {
+                "decision": "NO_TRADE",
+                "symbol": None,
+                "direction": None,
+                "lot_size": 0,
+                "confidence": 0,
+                "reasoning": "LLM failed, fallback to safe mode",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Validate and sanitize LLM response
+        decision = self.validate_decision(llm_response, account_balance)
+        
+        # Save decision
+        self.save_decision(decision)
+        
+        return decision
+    
+    def validate_decision(self, llm_decision: Dict, account_balance: float) -> Dict:
+        """Validate and enforce risk limits on LLM decision"""
+        
+        # Default safe decision
+        safe_decision = {
+            "decision": "NO_TRADE",
+            "symbol": None,
+            "direction": None,
+            "lot_size": 0,
+            "confidence": 0,
+            "reasoning": "Validation failed",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Check if LLM said NO_TRADE
+        if llm_decision.get('decision') != 'TRADE':
+            safe_decision['reasoning'] = llm_decision.get('reasoning', 'LLM advised no trade')
+            return safe_decision
+        
+        # Validate required fields
+        symbol = llm_decision.get('symbol')
+        direction = llm_decision.get('direction')
+        lot_size = llm_decision.get('lot_size', 0)
+        confidence = llm_decision.get('confidence', 0)
+        
+        if not all([symbol, direction, lot_size > 0]):
+            safe_decision['reasoning'] = 'Missing required fields'
+            return safe_decision
+        
+        # Enforce confidence threshold
+        if confidence < self.min_confidence:
+            safe_decision['reasoning'] = f'Confidence {confidence}% below threshold {self.min_confidence}%'
+            return safe_decision
+        
+        # Enforce lot size limit
+        max_lot = 0.5  # Conservative max
+        if lot_size > max_lot:
+            lot_size = max_lot
+            print(f"[RISK] Lot size capped at {max_lot}")
+        
+        # Enforce risk limit
+        risk_amount = lot_size * 50 * 10  # 50 pips × $10/pip
+        risk_percent = risk_amount / account_balance * 100
+        
+        if risk_percent > self.max_risk_per_trade:
+            # Reduce lot size to meet risk limit
+            lot_size = (account_balance * self.max_risk_per_trade / 100) / (50 * 10)
+            lot_size = round(lot_size, 2)
+            print(f"[RISK] Lot reduced to {lot_size} to meet {self.max_risk_per_trade}% risk")
+        
+        # Check daily loss limit
+        daily_pnl = self.get_daily_pnl()
+        daily_loss = abs(min(0, daily_pnl))
+        daily_loss_percent = daily_loss / account_balance * 100
+        
+        if daily_loss_percent > 3:  # Soft stop at 3%
+            safe_decision['reasoning'] = f'Daily loss {daily_loss_percent:.1f}% > 3%, trading halted'
+            return safe_decision
+        
+        # Return validated decision
+        return {
+            "decision": "TRADE",
+            "symbol": symbol,
+            "direction": direction,
+            "lot_size": lot_size,
+            "confidence": confidence,
+            "risk_percent": round(risk_percent, 2),
+            "reasoning": llm_decision.get('reasoning', 'LLM approved'),
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    def save_decision(self, decision: Dict):
+        """Save decision to log file"""
+        try:
+            decisions = []
+            if os.path.exists(self.decisions_file):
+                with open(self.decisions_file, 'r') as f:
+                    decisions = json.load(f)
+            
+            decisions.append(decision)
+            
+            # Keep only last 100
+            decisions = decisions[-100:]
+            
+            with open(self.decisions_file, 'w') as f:
+                json.dump(decisions, f, indent=2)
+        except Exception as e:
+            print(f"[WARNING] Could not save decision: {e}")
+
+
+# Backward compatibility alias
+OracleBrain = OracleBrainLLM
+
+
+if __name__ == "__main__":
+    # Test
+    brain = OracleBrainLLM()
+    
+    test_signals = {
+        'technical': {
+            'EURUSD': {'trend': 'BULLISH', 'confidence': 85, 'direction': 'BUY', 'confluences': 3},
+            'GBPUSD': {'trend': 'BEARISH', 'confidence': 70, 'direction': 'SELL', 'confluences': 2}
+        },
+        'sentiment': {'usd_strength': 45, 'risk_tone': 'RISK_ON'},
+        'news': {'news_bias': 'neutral', 'high_impact_events': 0}
+    }
+    
+    print("Testing AI Brain LLM...")
+    decision = brain.make_decision(test_signals, 9000)
+    print(f"\nDecision: {json.dumps(decision, indent=2)}")

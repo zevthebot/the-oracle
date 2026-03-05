@@ -1,0 +1,381 @@
+"""
+THE ORACLE - AI Brain (Central Intelligence)
+Analyzes aggregated signals and makes final trading decisions
+"""
+
+import json
+import os
+from typing import Dict, List, Optional, Tuple
+from datetime import datetime
+import glob
+
+
+class OracleBrain:
+    """
+    AI Brain - Central decision maker for THE ORACLE trading system
+    Analyzes all agent outputs and makes final trade decisions
+    """
+    
+    def __init__(self, model_provider: str = "openrouter", model: str = "moonshotai/kimi-k2.5"):
+        self.model_provider = model_provider
+        self.model = model
+        self.output_dir = "the_oracle/output"
+        self.decisions_file = "the_oracle/brain_decisions.json"
+        
+        # Risk parameters
+        self.max_risk_per_trade = 2.0  # %
+        self.max_daily_loss = 5.0  # %
+        self.min_confidence = 60  # 0-100
+        
+    def load_aggregated_signal(self, symbol: str = None) -> Optional[Dict]:
+        """Load aggregated signals from file"""
+        pattern = f"{self.output_dir}/signals_aggregated_*.json"
+        files = glob.glob(pattern)
+        
+        if not files:
+            return None
+            
+        latest = max(files, key=os.path.getctime)
+        
+        with open(latest, 'r') as f:
+            data = json.load(f)
+            
+        if symbol and 'signals' in data:
+            return data['signals'].get(symbol)
+        
+        return data
+    
+    def analyze_trade_quality(self, signal: Dict) -> Dict:
+        """
+        Deep analysis of trade quality
+        Returns: quality_score, should_trade, risk_assessment
+        """
+        if not signal:
+            return {
+                "quality_score": 0,
+                "should_trade": False,
+                "reason": "NO_SIGNAL_DATA"
+            }
+        
+        score = 0
+        checks_passed = []
+        checks_failed = []
+        
+        # 1. Confidence check
+        confidence = signal.get('confidence', 0)
+        if confidence >= self.min_confidence:
+            score += 25
+            checks_passed.append(f"CONFIDENCE_OK_{confidence}")
+        else:
+            checks_failed.append(f"CONFIDENCE_LOW_{confidence}")
+        
+        # 2. Bias check (must be BUY or SELL, not NEUTRAL)
+        bias = signal.get('bias', 'NEUTRAL')
+        if bias in ['BUY', 'SELL']:
+            score += 25
+            checks_passed.append(f"DIRECTION_CLEAR_{bias}")
+        else:
+            checks_failed.append("DIRECTION_NEUTRAL")
+        
+        # 3. Strength check
+        strength = signal.get('strength', 0)
+        if strength >= 0.5:  # Strong signal
+            score += 25
+            checks_passed.append(f"STRENGTH_OK_{strength}")
+        elif strength >= 0.3:
+            score += 15
+            checks_passed.append(f"STRENGTH_MODERATE_{strength}")
+        else:
+            checks_failed.append(f"STRENGTH_WEAK_{strength}")
+        
+        # 4. Risk factors check
+        risk_factors = signal.get('risk_factors', [])
+        if not risk_factors:
+            score += 25
+            checks_passed.append("NO_RISK_FACTORS")
+        elif len(risk_factors) == 1:
+            score += 15
+            checks_passed.append(f"MINOR_RISK_{risk_factors[0]}")
+        else:
+            checks_failed.append(f"MULTIPLE_RISKS_{len(risk_factors)}")
+        
+        # Final decision
+        should_trade = score >= 60 and bias in ['BUY', 'SELL']
+        
+        return {
+            "quality_score": score,
+            "should_trade": should_trade,
+            "checks_passed": checks_passed,
+            "checks_failed": checks_failed,
+            "confidence": confidence,
+            "bias": bias,
+            "strength": strength,
+            "risk_factors": risk_factors
+        }
+    
+    def calculate_position_size(self, signal: Dict, account_balance: float, 
+                                quality: Dict) -> Dict:
+        """
+        Calculate optimal position size based on signal quality and risk
+        """
+        # Base risk percentage
+        base_risk = 1.0  # 1% base
+        
+        # Adjust based on quality score
+        quality_score = quality.get('quality_score', 0)
+        if quality_score >= 85:
+            risk_multiplier = 2.0  # Full size
+        elif quality_score >= 70:
+            risk_multiplier = 1.5  # 1.5x base
+        elif quality_score >= 60:
+            risk_multiplier = 1.0  # Base
+        else:
+            risk_multiplier = 0.5  # Reduced
+        
+        # Adjust based on confidence
+        confidence = signal.get('confidence', 50)
+        if confidence >= 75:
+            confidence_multiplier = 1.2
+        elif confidence >= 65:
+            confidence_multiplier = 1.0
+        else:
+            confidence_multiplier = 0.8
+        
+        # Final risk percentage
+        risk_percent = min(
+            base_risk * risk_multiplier * confidence_multiplier,
+            self.max_risk_per_trade
+        )
+        
+        # Calculate lot size (simplified - would use ATR for real position sizing)
+        # Assuming $10/pip for 1.0 lot
+        max_risk_dollars = account_balance * (risk_percent / 100)
+        
+        # Get stop loss distance from signal if available
+        trade_params = signal.get('trade_parameters', {})
+        sl_pips = 50  # Default 50 pips if not specified
+        
+        if 'sl' in trade_params:
+            entry = signal.get('entry_price', 0)
+            if entry and trade_params['sl']:
+                sl_pips = abs(entry - trade_params['sl']) * 10000  # Convert to pips
+        
+        # Calculate lot size
+        pip_value = 10  # $10 per pip for 1.0 lot on major pairs
+        if sl_pips > 0:
+            lot_size = max_risk_dollars / (sl_pips * pip_value)
+        else:
+            lot_size = 0.01  # Minimum
+        
+        # Round to 2 decimals
+        lot_size = round(lot_size, 2)
+        
+        # Cap at reasonable limits
+        lot_size = min(lot_size, 2.0)  # Max 2.0 lots
+        lot_size = max(lot_size, 0.01)  # Min 0.01 lots
+        
+        return {
+            "risk_percent": round(risk_percent, 2),
+            "risk_dollars": round(max_risk_dollars, 2),
+            "lot_size": lot_size,
+            "sl_pips": round(sl_pips, 1),
+            "multipliers": {
+                "quality": risk_multiplier,
+                "confidence": confidence_multiplier
+            }
+        }
+    
+    def generate_trade_plan(self, symbol: str, account_balance: float = 10000) -> Optional[Dict]:
+        """
+        Generate complete trade plan for a symbol
+        """
+        # Load aggregated signal
+        signal = self.load_aggregated_signal(symbol)
+        
+        if not signal:
+            return None
+        
+        # Analyze quality
+        quality = self.analyze_trade_quality(signal)
+        
+        if not quality['should_trade']:
+            return {
+                "symbol": symbol,
+                "timestamp": datetime.now().isoformat(),
+                "decision": "NO_TRADE",
+                "reason": quality['checks_failed'],
+                "quality_score": quality['quality_score'],
+                "signal_data": signal
+            }
+        
+        # Calculate position sizing
+        sizing = self.calculate_position_size(signal, account_balance, quality)
+        
+        # Get trade parameters
+        trade_params = signal.get('trade_parameters', {})
+        
+        # Build trade plan
+        trade_plan = {
+            "symbol": symbol,
+            "timestamp": datetime.now().isoformat(),
+            "decision": "EXECUTE",
+            "direction": signal['bias'],
+            
+            "quality_analysis": quality,
+            
+            "entry": {
+                "type": "MARKET",  # Or LIMIT if specified
+                "zone": signal.get('entry_zone', 'current_price'),
+            },
+            
+            "position": sizing,
+            
+            "stop_loss": {
+                "price": trade_params.get('sl'),
+                "pips": sizing['sl_pips'],
+                "type": "HARD_SL"
+            },
+            
+            "take_profits": {
+                "tp1": {
+                    "price": trade_params.get('tp1'),
+                    "risk_reward": 1.5,
+                    "size_percent": 50  # Close 50% at TP1
+                },
+                "tp2": {
+                    "price": trade_params.get('tp2'),
+                    "risk_reward": 2.5,
+                    "size_percent": 50  # Close remaining 50% at TP2
+                }
+            },
+            
+            "management": {
+                "breakeven": {
+                    "trigger": "10_pips_profit",
+                    "action": "move_sl_to_entry"
+                },
+                "trailing": {
+                    "enable": True,
+                    "activation": "after_tp1",
+                    "step": 10  # Trail every 10 pips
+                }
+            },
+            
+            "signals_summary": {
+                "technical": signal.get('component_scores', {}).get('technical', {}),
+                "news": signal.get('component_scores', {}).get('news', {}),
+                "sentiment": signal.get('component_scores', {}).get('sentiment', {})
+            },
+            
+            "max_hold_time": "4_hours",  # Day trading focus
+            "close_conditions": [
+                "tp1_or_tp2_hit",
+                "sl_hit",
+                "max_hold_time_reached",
+                "opposing_signal_generated"
+            ]
+        }
+        
+        return trade_plan
+    
+    def scan_all_opportunities(self, symbols: List[str] = None, 
+                               account_balance: float = 10000) -> Dict:
+        """
+        Scan all symbols and generate trade opportunities
+        """
+        if symbols is None:
+            symbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD']
+        
+        opportunities = []
+        rejected = []
+        
+        for symbol in symbols:
+            plan = self.generate_trade_plan(symbol, account_balance)
+            
+            if plan and plan['decision'] == 'EXECUTE':
+                opportunities.append(plan)
+            else:
+                rejected.append({
+                    "symbol": symbol,
+                    "reason": plan.get('reason', 'UNKNOWN') if plan else 'NO_SIGNAL'
+                })
+        
+        # Sort by quality score
+        opportunities.sort(
+            key=lambda x: x['quality_analysis']['quality_score'], 
+            reverse=True
+        )
+        
+        # Limit total daily exposure
+        max_trades = 3
+        selected_trades = opportunities[:max_trades]
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "account_balance": account_balance,
+            "account_risk_percent": self.max_daily_loss,
+            "total_opportunities": len(opportunities),
+            "selected_trades": len(selected_trades),
+            "rejected_symbols": len(rejected),
+            "trades": selected_trades,
+            "rejected": rejected,
+            "daily_status": "ACTIVE" if selected_trades else "NO_VALID_SETUPS"
+        }
+    
+    def save_decision(self, decision: Dict, filename: str = None):
+        """Save brain decision to file"""
+        if filename is None:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"{self.output_dir}/brain_decision_{timestamp}.json"
+        
+        with open(filename, 'w') as f:
+            json.dump(decision, f, indent=2)
+        
+        return filename
+    
+    def format_trade_for_execution(self, trade_plan: Dict) -> Dict:
+        """
+        Format trade plan for MT5 execution
+        """
+        return {
+            "action": "OPEN_POSITION",
+            "symbol": trade_plan['symbol'],
+            "direction": trade_plan['direction'],
+            "lot_size": trade_plan['position']['lot_size'],
+            "sl_pips": trade_plan['position']['sl_pipes'],
+            "tp1": trade_plan['take_profits']['tp1'].get('price'),
+            "tp2": trade_plan['take_profits']['tp2'].get('price'),
+            "risk_percent": trade_plan['position']['risk_percent'],
+            "quality_score": trade_plan['quality_analysis']['quality_score'],
+            "source": "ORACLE_BRAIN"
+        }
+
+
+if __name__ == "__main__":
+    # Test the brain
+    brain = OracleBrain()
+    
+    # Generate all opportunities
+    decisions = brain.scan_all_opportunities(
+        symbols=['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD'],
+        account_balance=10000
+    )
+    
+    # Save decision
+    filename = brain.save_decision(decisions)
+    print(f"Brain decision saved: {filename}")
+    
+    # Print summary
+    print(f"\n=== ORACLE BRAIN DECISIONS ===")
+    print(f"Total opportunities: {decisions['total_opportunities']}")
+    print(f"Selected trades: {decisions['selected_trades']}")
+    print(f"Rejected: {decisions['rejected_symbols']}")
+    print(f"\nStatus: {decisions['daily_status']}")
+    
+    if decisions['trades']:
+        print(f"\n=== TOP TRADE ===")
+        top = decisions['trades'][0]
+        print(f"{top['symbol']}: {top['direction']}")
+        print(f"Lot: {top['position']['lot_size']}")
+        print(f"Quality: {top['quality_analysis']['quality_score']}/100")
+        print(f"Confidence: {top['quality_analysis']['confidence']}")
