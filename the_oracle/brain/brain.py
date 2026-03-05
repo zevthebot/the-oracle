@@ -471,12 +471,12 @@ OUTPUT FORMAT (JSON ONLY)
         
         # Log decision
         if decision['decision'] == 'TRADE':
-            print(f"\n🎯 EXPERT TRADE SIGNAL:")
+            print(f"\n[TRADE SIGNAL]")
             print(f"   {decision['symbol']} {decision['direction']}")
             print(f"   Lot: {decision['lot_size']}, Confidence: {decision['confidence']}%")
-            print(f"   🧠 {decision['reasoning'][:100]}...")
+            print(f"   Reason: {decision['reasoning'][:100]}...")
         else:
-            print(f"⏸️  NO TRADE: {decision['reasoning'][:80]}...")
+            print(f"[NO TRADE] {decision['reasoning'][:80]}...")
         
         return decision
 
