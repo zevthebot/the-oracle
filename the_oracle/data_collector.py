@@ -121,15 +121,31 @@ class DataCollector:
         timestamp = datetime.now().strftime('%H:%M:%S')
         print(f"[{timestamp}] Collecting data...")
         
-        for symbol in self.symbols:
-            try:
-                # Quick technical analysis
-                data = self.technical.analyze_symbol(symbol)
-                if data:
-                    self.buffer.add_reading(symbol, data)
-                    print(f"  {symbol}: {data.get('direction')} {data.get('confidence')}%")
-            except Exception as e:
-                print(f"  {symbol}: ERROR - {e}")
+        # Connect to MT5
+        if not self.technical.connect():
+            print("[ERROR] Cannot connect to MT5")
+            return
+        
+        try:
+            for symbol in self.symbols:
+                try:
+                    # Quick technical analysis
+                    data = self.technical.analyze_symbol(symbol)
+                    if data:
+                        # Convert dataclass to dict for buffer
+                        data_dict = {
+                            'direction': data.recommended_direction,
+                            'confidence': round(data.confidence * 100, 1),
+                            'alignment': round(data.alignment_score * 100, 1),
+                            'confluences': len(data.key_confluences)
+                        }
+                        self.buffer.add_reading(symbol, data_dict)
+                        print(f"  {symbol}: {data_dict['direction']} {data_dict['confidence']}%")
+                except Exception as e:
+                    print(f"  {symbol}: ERROR - {e}")
+        finally:
+            # Always disconnect
+            self.technical.disconnect()
     
     def run_continuous(self):
         """Run collector in continuous mode"""
