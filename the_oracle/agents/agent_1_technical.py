@@ -786,15 +786,18 @@ class TechnicalAnalyzer:
         print(f"  [SAVED] {filepath}")
         return filepath
     
-    def scan_and_save_all(self):
+    def scan_and_save_all(self, symbols=None):
         """Scan all symbols and save results - interface for orchestrator"""
         if not self.connected:
             if not self.connect():
                 print("[ERROR] Could not connect to MT5")
                 return []
         
+        # Use provided symbols or fall back to self.symbols
+        symbols_to_scan = symbols if symbols is not None else self.symbols
+        
         all_results = []
-        for symbol in self.symbols:
+        for symbol in symbols_to_scan:
             result = self.analyze_symbol(symbol)
             if result:
                 filepath = self.save_analysis(result)

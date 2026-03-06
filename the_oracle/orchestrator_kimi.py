@@ -48,7 +48,7 @@ class OracleOrchestratorKimi:
             
             # Step 1: Technical Analysis
             print("\n[1/5] Technical Agent analyzing...")
-            tech_results = self.agent_1.scan_and_save_all()
+            tech_results = self.agent_1.scan_and_save_all(self.symbols)
             technical_data = {d['symbol']: d for d in tech_results if 'symbol' in d}
             results['steps']['technical'] = f"{len(technical_data)} symbols"
             print(f"  [OK] {len(technical_data)} technical analyses complete")
