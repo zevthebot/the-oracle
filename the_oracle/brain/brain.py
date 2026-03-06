@@ -84,8 +84,8 @@ USD: {signals.get('sentiment', {}).get('usd_strength', 50)}/100
 Risk: {signals.get('sentiment', {}).get('risk_tone', 'MIXED')}
 
 RULES:
-1. TRADE only if setup score >= 75
-2. Prefer confidence 80%+ 
+1. TRADE only if setup score >= 70
+2. Prefer confidence 75%+ 
 3. Lot: 0.1-0.5 based on conviction
 4. NO trade if drawdown approaching 4%
 
@@ -215,7 +215,7 @@ Reply ONLY with valid JSON (no other text):
         # Safety
         if decision['lot_size'] > 0.5:
             decision['lot_size'] = 0.5
-        if decision['confidence'] < 75:
+        if decision['confidence'] < 70:
             decision['decision'] = 'NO_TRADE'
         
         if decision['decision'] == 'TRADE':

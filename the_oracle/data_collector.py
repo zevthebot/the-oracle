@@ -110,7 +110,7 @@ class DataCollector:
     """Continuous data collector - runs every 2 minutes"""
     
     def __init__(self, symbols=None, interval_seconds=120):
-        self.symbols = symbols or ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD']
+        self.symbols = symbols or ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'EURJPY', 'GBPJPY']
         self.interval = interval_seconds
         self.buffer = SignalBuffer()
         self.technical = TechnicalAnalyzer()

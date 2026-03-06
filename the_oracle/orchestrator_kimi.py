@@ -23,7 +23,7 @@ class OracleOrchestratorKimi:
     """THE ORACLE with Kimi K2.5 LLM"""
     
     def __init__(self, symbols=None, account_balance=10000):
-        self.symbols = symbols or ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD']
+        self.symbols = symbols or ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'EURJPY', 'GBPJPY']
         self.account_balance = account_balance
         
         self.agent_1 = TechnicalAnalyzer()
@@ -156,7 +156,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='THE ORACLE v3.2 - Kimi K2.5')
     parser.add_argument('--balance', type=float, default=10000, help='Account balance')
-    parser.add_argument('--symbols', nargs='+', default=['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD'])
+    parser.add_argument('--symbols', nargs='+', default=['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'EURJPY', 'GBPJPY']
     
     args = parser.parse_args()
     
