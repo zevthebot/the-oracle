@@ -4,7 +4,10 @@
 **Version:** 3.2 - MiniMax M2.5 LLM Mode  
 **Active Period:** March 2026  
 **Account:** Pepperstone Demo 62108425  
-**Mode:** Fresh Start (LLM Authority)
+**Mode:** Fresh Start (LLM Authority)  
+**Symbols:** 8 pairs (EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, NZDUSD, EURJPY, GBPJPY)  
+**Confidence Threshold:** 65%  
+**LLM Timeout:** 300 seconds (5 minutes)
 
 ---
 
@@ -125,12 +128,13 @@ News: 1 events
   "server": "PepperstoneUK-Demo",
   "llm_model": "minimax/minimax-m2.5",
   "llm_provider": "OpenRouter",
-  "symbols": ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD"],
+  "symbols": ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD", "EURJPY", "GBPJPY"],
   "mode": "fresh_start",
   "daily_loss_limit": "DISABLED",
   "risk_engine_override": "DISABLED",
   "max_lot": 0.5,
-  "min_confidence": 75
+  "min_confidence": 65,
+  "llm_timeout_seconds": 300
 }
 ```
 
