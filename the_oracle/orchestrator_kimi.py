@@ -156,7 +156,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='THE ORACLE v3.2 - Kimi K2.5')
     parser.add_argument('--balance', type=float, default=10000, help='Account balance')
-    parser.add_argument('--symbols', nargs='+', default=['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'EURJPY', 'GBPJPY']
+    parser.add_argument('--symbols', nargs='+', default=['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'EURJPY', 'GBPJPY'])
     
     args = parser.parse_args()
     
